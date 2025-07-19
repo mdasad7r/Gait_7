@@ -30,7 +30,7 @@ def train_one_fold(fold_index, train_ids, val_ids):
     )
 
     # Save model
-    os.makedirs(config.MODEL_SAVE_DIR, exist_ok=True)
+    os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     model.save(os.path.join(config.MODEL_SAVE_DIR, f"model_fold_{fold_index + 1}.h5"))
 
 
