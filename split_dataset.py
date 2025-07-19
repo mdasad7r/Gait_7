@@ -1,14 +1,14 @@
 # split_dataset.py
-
 import os
+import config
 import numpy as np
 
-def get_all_subject_ids(dataset_root="CASIA_B/output"):
+def get_all_subject_ids(dataset_root=config.TRAIN_PATH):
     """Returns all subject IDs found in the dataset directory."""
     ids = sorted([d for d in os.listdir(dataset_root) if d.isdigit()])
     return ids
 
-def get_train_val_test_ids(dataset_root="CASIA_B/output"):
+def get_train_val_test_ids(dataset_root=config.TRAIN_PATH):
     """Split 001–074 for training/validation, 075–124 for testing."""
     all_ids = get_all_subject_ids(dataset_root)
     train_val_ids = [sid for sid in all_ids if 1 <= int(sid) <= 74]
