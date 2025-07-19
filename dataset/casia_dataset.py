@@ -5,7 +5,7 @@ from tensorflow.keras.utils import to_categorical
 import config
 
 
-def load_silhouette_sequence(seq_path, sequence_len=config.SEQUENCE_LEN, img_size=(64, 64)):
+def load_silhouette_sequence(seq_path, sequence_len=config.SEQUENCE_LEN, img_size=config.IMAGE_SIZE):
     """
     Load a silhouette sequence from a directory of PNG frames.
     Samples `sequence_len` frames uniformly and pads if necessary.
@@ -28,27 +28,30 @@ def load_silhouette_sequence(seq_path, sequence_len=config.SEQUENCE_LEN, img_siz
         img = tf.cast(img, tf.float32) / 255.0
         imgs.append(img)
 
+    # Pad with black frames if not enough
     while len(imgs) < sequence_len:
         imgs.append(tf.zeros_like(imgs[0]))
 
-    return tf.stack(imgs)
+    return tf.stack(imgs)  # Shape: (T, H, W, 1)
 
 
 def load_dataset(subject_ids, mode='train'):
     """
-    Loads sequences and labels for a given list of subject IDs.
-    Returns NumPy tensors (x, y).
+    Load all silhouette sequences and labels for given subject IDs.
+    Returns two tensors: x_data (T, H, W, 1), y_data (categorical labels).
     """
     x_data, y_data = [], []
 
+    base_path = config.TRAIN_PATH if mode in ['train', 'val'] else config.TEST_PATH
+
     for sid in subject_ids:
-        subject_path = os.path.join(config.CASIA_ROOT, sid)
+        subject_path = os.path.join(base_path, sid)
         if not os.path.exists(subject_path):
             continue
 
         for seq_type in os.listdir(subject_path):
             if not seq_type.startswith(('nm', 'cl', 'bg')):
-                continue  # Skip invalid folders
+                continue
 
             seq_type_path = os.path.join(subject_path, seq_type)
 
@@ -73,7 +76,7 @@ def load_dataset(subject_ids, mode='train'):
 
 def get_dataset(subject_ids, mode='train'):
     """
-    Wraps the loaded data in a tf.data.Dataset.
+    Wraps (x, y) tensors into a batched, prefetched tf.data.Dataset.
     """
     x, y = load_dataset(subject_ids, mode)
     dataset = tf.data.Dataset.from_tensor_slices((x, y))
