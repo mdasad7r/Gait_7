@@ -61,26 +61,24 @@ def build_model(sequence_len=config.SEQUENCE_LEN,
                 num_classes=config.NUM_CLASSES,
                 dropout_rate=config.DROPOUT_RATE):
     """
-    Model: Custom CNN + ResNet50 → TKAN
-    Input: (T, 64, 64, 1)
+    Dual-stream model: Custom CNN + ResNet50 → TKAN → Classification
     """
-    seq_input = Input(shape=(sequence_len, *cnn_input_shape), name="input_sequence")
-
-    # Convert grayscale to RGB for ResNet input
-    resnet_input = Lambda(lambda x: tf.repeat(x, repeats=3, axis=-1))(seq_input)
+    # === Dual Inputs ===
+    seq_gray_input = Input(shape=(sequence_len, *cnn_input_shape), name="seq_gray")
+    seq_rgb_input  = Input(shape=(sequence_len, *resnet_input_shape), name="seq_rgb")
 
     # === Encoders ===
     cnn_encoder = build_custom_cnn_encoder(input_shape=cnn_input_shape)
     resnet_encoder = build_resnet50_encoder(input_shape=resnet_input_shape)
 
-    cnn_features = TimeDistributed(cnn_encoder)(seq_input)           # (T, 256)
-    resnet_features = TimeDistributed(resnet_encoder)(resnet_input)  # (T, 256)
+    cnn_features = TimeDistributed(cnn_encoder)(seq_gray_input)  # (T, feature_dim)
+    resnet_features = TimeDistributed(resnet_encoder)(seq_rgb_input)  # (T, feature_dim)
 
     # === Feature Fusion ===
-    fused = Concatenate()([cnn_features, resnet_features])  # (T, 512)
-    fused_proj = Dense(feature_dim)(fused)                  # Project to (T, 256)
+    fused = Concatenate()([cnn_features, resnet_features])  # (T, 2*feature_dim)
+    fused_proj = Dense(feature_dim, activation='relu')(fused)  # Project to (T, feature_dim)
 
-    # === TKAN ===
+    # === TKAN Temporal Modeling ===
     x = TKAN(
         units=tkan_hidden_dim,
         sub_kan_configs=[0, 1, 2, 3, 4],
@@ -93,9 +91,4 @@ def build_model(sequence_len=config.SEQUENCE_LEN,
     x = Dropout(dropout_rate)(x)
     out = Dense(num_classes, activation='softmax', name="identity_output")(x)
 
-    return Model(seq_input, out, name="pose_dual_encoder_tkan_model")
-
-
-# Entrypoint for training
-def build():
-    return build_model()
+    return Model([seq_gray_input, seq_rgb_input], out, name="dual_encoder_tkan_model")
