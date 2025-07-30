@@ -1,86 +1,90 @@
 import os
-import tensorflow as tf
 import numpy as np
-from tensorflow.keras.utils import to_categorical
-import config
+import torch
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
+
+# === Dataset Loader for CASIA-B ===
+class CASIABDataset(Dataset):
+    def __init__(self, sequences, sequence_len=50, image_size=(64, 64)):
+        """
+        Args:
+            sequences: list of folder paths (each folder contains silhouette frames)
+            sequence_len: number of frames per sequence to sample
+            image_size: resize (H, W)
+        """
+        self.sequences = sequences
+        self.sequence_len = sequence_len
+        self.image_size = image_size
+
+        # Preprocessing for each image
+        self.transform = transforms.Compose([
+            transforms.Grayscale(num_output_channels=1),
+            transforms.Resize(self.image_size),
+            transforms.ToTensor(),  # [0,1]
+        ])
+
+        # Map subject IDs to class indices
+        self.subjects = sorted(list({seq.split(os.sep)[-3] for seq in sequences}))
+        self.subject_to_idx = {sid: idx for idx, sid in enumerate(self.subjects)}
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, idx):
+        seq_path = self.sequences[idx]
+
+        # Label is subject ID (folder name 3 levels up: 001/nm-01/000)
+        subject_id = seq_path.split(os.sep)[-3]
+        label = self.subject_to_idx[subject_id]
+
+        # Collect all frame paths
+        frame_files = sorted([
+            os.path.join(seq_path, f) for f in os.listdir(seq_path)
+            if f.endswith(".png") or f.endswith(".jpg")
+        ])
+
+        # Handle sequences shorter than required
+        if len(frame_files) < self.sequence_len:
+            frame_files = (frame_files * (self.sequence_len // len(frame_files) + 1))[:self.sequence_len]
+
+        # Uniformly sample frames
+        step = len(frame_files) // self.sequence_len
+        frame_files = frame_files[::step][:self.sequence_len]
+
+        # Load frames
+        frames = [self.transform(Image.open(f)) for f in frame_files]  # list of [C,H,W]
+
+        # Stack into [T,C,H,W]
+        frames_tensor = torch.stack(frames)
+
+        return frames_tensor, label
 
 
-def load_silhouette_sequence(seq_path, sequence_len=config.SEQUENCE_LEN, img_size=config.IMAGE_SIZE):
-    """
-    Load a silhouette sequence from a directory of PNG frames.
-    Samples `sequence_len` frames uniformly and pads if necessary.
-    """
-    frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
-    total = len(frames)
+def get_loaders(train_sequences, test_sequences, batch_size=16, sequence_len=50, image_size=(64, 64)):
+    """Creates PyTorch DataLoaders for CASIA-B train/test sets."""
+    train_dataset = CASIABDataset(train_sequences, sequence_len, image_size)
+    test_dataset = CASIABDataset(test_sequences, sequence_len, image_size)
 
-    if total == 0:
-        return None
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    step = max(1, total // sequence_len)
-    selected = frames[::step][:sequence_len]
-
-    imgs = []
-    for fname in selected:
-        img_path = os.path.join(seq_path, fname)
-        img = tf.io.read_file(img_path)
-        img = tf.image.decode_png(img, channels=1)
-        img = tf.image.resize(img, img_size)
-        img = tf.cast(img, tf.float32) / 255.0
-        imgs.append(img)
-
-    # Pad with black frames if not enough
-    while len(imgs) < sequence_len:
-        imgs.append(tf.zeros_like(imgs[0]))
-
-    return tf.stack(imgs)  # Shape: (T, H, W, 1)
+    return train_loader, test_loader, train_dataset.subject_to_idx
 
 
-def load_dataset(subject_ids, mode='train'):
-    """
-    Load all silhouette sequences and labels for given subject IDs.
-    Returns two tensors: x_data (T, H, W, 1), y_data (categorical labels).
-    """
-    x_data, y_data = [], []
+if __name__ == "__main__":
+    # Example usage with split_dataset.py
+    from split_dataset import get_all_sequences
 
-    base_path = config.TRAIN_PATH if mode in ['train', 'val'] else config.TEST_PATH
+    BASE_PATH = "CASIA-B/output"
+    train_list, test_list = get_all_sequences(BASE_PATH)
 
-    for sid in subject_ids:
-        subject_path = os.path.join(base_path, sid)
-        if not os.path.exists(subject_path):
-            continue
+    print(f"Train: {len(train_list)} sequences | Test: {len(test_list)} sequences")
 
-        for seq_type in os.listdir(subject_path):
-            if not seq_type.startswith(('nm', 'cl', 'bg')):
-                continue
-
-            seq_type_path = os.path.join(subject_path, seq_type)
-
-            for view in os.listdir(seq_type_path):
-                seq_path = os.path.join(seq_type_path, view)
-                if not os.path.isdir(seq_path):
-                    continue
-
-                sequence = load_silhouette_sequence(seq_path)
-                if sequence is not None:
-                    x_data.append(sequence)
-                    y_data.append(int(sid) - 1)  # zero-based class indexing
-
-    if not x_data:
-        raise ValueError(f"No data found for subject_ids: {subject_ids}")
-
-    x_data = tf.stack(x_data)
-    y_data = to_categorical(y_data, config.NUM_CLASSES)
-
-    return x_data, y_data
-
-
-def get_dataset(subject_ids, mode='train'):
-    """
-    Wraps (x, y) tensors into a batched, prefetched tf.data.Dataset.
-    """
-    x, y = load_dataset(subject_ids, mode)
-    dataset = tf.data.Dataset.from_tensor_slices((x, y))
-    if mode == 'train':
-        dataset = dataset.shuffle(1024)
-    dataset = dataset.batch(config.BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-    return dataset
+    train_loader, test_loader, label_map = get_loaders(train_list, test_list, batch_size=8)
+    print(f"Classes: {len(label_map)}")
+    for batch_x, batch_y in train_loader:
+        print("Batch X:", batch_x.shape)  # [B,T,C,H,W]
+        print("Batch Y:", batch_y.shape)
+        break
