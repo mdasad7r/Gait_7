@@ -1,52 +1,68 @@
-# split_dataset.py
 import os
-import config
-import numpy as np
 
-def get_all_subject_ids(dataset_root=config.TRAIN_PATH):
-    """Returns all subject IDs found in the dataset directory."""
-    ids = sorted([d for d in os.listdir(dataset_root) if d.isdigit()])
-    return ids
+# === Custom Split for CASIA-B ===
+# Train sequences: nm-01..04, bg-01, cl-01
+# Test sequences:  nm-05..06, bg-02, cl-02
 
-def get_train_val_test_ids(dataset_root=config.TRAIN_PATH):
-    """Split 001–074 for training/validation, 075–124 for testing."""
-    all_ids = get_all_subject_ids(dataset_root)
-    train_val_ids = [sid for sid in all_ids if 1 <= int(sid) <= 74]
-    test_ids = [sid for sid in all_ids if 75 <= int(sid) <= 124]
-    return train_val_ids, test_ids
+TRAIN_KEYS = ["nm-01", "nm-02", "nm-03", "nm-04", "bg-01", "cl-01"]
+TEST_KEYS  = ["nm-05", "nm-06", "bg-02", "cl-02"]
 
-def k_fold_split(subject_ids, k=5, seed=42):
-    """Split subject IDs into k folds for cross-validation."""
-    np.random.seed(seed)
-    shuffled = np.random.permutation(subject_ids)
-    fold_size = len(subject_ids) // k
-    folds = [shuffled[i * fold_size:(i + 1) * fold_size] for i in range(k)]
-    return folds
-
-def get_gallery_probe_sequences(subject_root):
+def get_sequences_by_condition(subject_root):
     """
-    For a given subject, return two lists of (sequence_type, view) tuples:
-    - gallery = NM01 to NM04
-    - probe  = NM05–06, CL, BG
+    Returns two lists: train_sequence_paths, test_sequence_paths
+    Each sequence path points to the folder that contains the frames for a view.
+    Example:
+    CASIA-B/output/001/nm-01/000/   -> this is a sequence path
     """
-    gallery, probe = [], []
+    train_seqs, test_seqs = [], []
 
-    for seq_type in os.listdir(subject_root):
-        if not seq_type.startswith(('nm', 'cl', 'bg')):
+    # Loop through all sequence types (nm-01, cl-01, etc.)
+    for seq_type in sorted(os.listdir(subject_root)):
+        seq_type_path = os.path.join(subject_root, seq_type)
+        if not os.path.isdir(seq_type_path):
             continue
 
-        seq_type_path = os.path.join(subject_root, seq_type)
-        for view in os.listdir(seq_type_path):
-            key = (seq_type, view)
+        # Determine if this sequence type belongs to train or test
+        seq_key = seq_type.lower()
 
-            # NM01–04 are gallery
-            if seq_type.startswith('nm'):
-                nm_id = int(seq_type.split('-')[1])
-                if 1 <= nm_id <= 4:
-                    gallery.append(key)
-                else:
-                    probe.append(key)
-            else:
-                probe.append(key)
+        # Loop through all views (000, 018, 036, ...)
+        for view in sorted(os.listdir(seq_type_path)):
+            view_path = os.path.join(seq_type_path, view)
+            if not os.path.isdir(view_path):
+                continue
 
-    return gallery, probe
+            if any(seq_key.startswith(k) for k in TRAIN_KEYS):
+                train_seqs.append(view_path)
+            elif any(seq_key.startswith(k) for k in TEST_KEYS):
+                test_seqs.append(view_path)
+
+    return train_seqs, test_seqs
+
+
+def get_all_sequences(casia_root):
+    """
+    Loops over all subjects in CASIA-B and collects train/test sequences
+    according to the specified protocol.
+    """
+    train_paths, test_paths = [], []
+
+    for sid in sorted(os.listdir(casia_root)):
+        subject_dir = os.path.join(casia_root, sid)
+        if not os.path.isdir(subject_dir):
+            continue
+
+        t_paths, tst_paths = get_sequences_by_condition(subject_dir)
+        train_paths.extend(t_paths)
+        test_paths.extend(tst_paths)
+
+    return train_paths, test_paths
+
+
+if __name__ == "__main__":
+    # Example usage
+    BASE_PATH = "CASIA-B/output"  # update if needed
+    train_list, test_list = get_all_sequences(BASE_PATH)
+    print(f"Total training sequences: {len(train_list)}")
+    print(f"Total testing sequences: {len(test_list)}")
+    print("Example train seq:", train_list[:3])
+    print("Example test seq:", test_list[:3])
