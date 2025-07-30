@@ -1,68 +1,46 @@
 import os
+import json
+from sklearn.model_selection import train_test_split
+import config
 
-# === Custom Split for CASIA-B ===
-# Train sequences: nm-01..04, bg-01, cl-01
-# Test sequences:  nm-05..06, bg-02, cl-02
+# Output file
+SPLIT_JSON = "data_split.json"
 
-TRAIN_KEYS = ["nm-01", "nm-02", "nm-03", "nm-04", "bg-01", "cl-01"]
-TEST_KEYS  = ["nm-05", "nm-06", "bg-02", "cl-02"]
+# Train/Test rule: 
+# Train: nm-01~04, bg-01, cl-01
+# Test: nm-05~06, bg-02, cl-02
+TRAIN_SEQS = ["nm-01", "nm-02", "nm-03", "nm-04", "bg-01", "cl-01"]
+TEST_SEQS  = ["nm-05", "nm-06", "bg-02", "cl-02"]
 
-def get_sequences_by_condition(subject_root):
-    """
-    Returns two lists: train_sequence_paths, test_sequence_paths
-    Each sequence path points to the folder that contains the frames for a view.
-    Example:
-    CASIA-B/output/001/nm-01/000/   -> this is a sequence path
-    """
-    train_seqs, test_seqs = [], []
+def is_valid_sequence(seq_name):
+    """Return True if folder name is a valid sequence like 'nm-01', 'cl-02', etc."""
+    return any(seq_name.startswith(prefix[:2]) for prefix in TRAIN_SEQS + TEST_SEQS)
 
-    # Loop through all sequence types (nm-01, cl-01, etc.)
-    for seq_type in sorted(os.listdir(subject_root)):
-        seq_type_path = os.path.join(subject_root, seq_type)
-        if not os.path.isdir(seq_type_path):
+def create_split(casia_root=config.CASIA_ROOT):
+    train_data, test_data = [], []
+
+    for subject_id in sorted(os.listdir(casia_root)):
+        subject_path = os.path.join(casia_root, subject_id)
+        if not os.path.isdir(subject_path) or not subject_id.isdigit():
             continue
 
-        # Determine if this sequence type belongs to train or test
-        seq_key = seq_type.lower()
-
-        # Loop through all views (000, 018, 036, ...)
-        for view in sorted(os.listdir(seq_type_path)):
-            view_path = os.path.join(seq_type_path, view)
-            if not os.path.isdir(view_path):
+        for seq_name in sorted(os.listdir(subject_path)):
+            seq_path = os.path.join(subject_path, seq_name)
+            if not os.path.isdir(seq_path) or not is_valid_sequence(seq_name):
                 continue
 
-            if any(seq_key.startswith(k) for k in TRAIN_KEYS):
-                train_seqs.append(view_path)
-            elif any(seq_key.startswith(k) for k in TEST_KEYS):
-                test_seqs.append(view_path)
+            # Assign to train/test list based on sequence type
+            if seq_name in TRAIN_SEQS:
+                train_data.append(seq_path)
+            elif seq_name in TEST_SEQS:
+                test_data.append(seq_path)
 
-    return train_seqs, test_seqs
+    # Save JSON
+    split = {"train": train_data, "test": test_data}
+    with open(SPLIT_JSON, "w") as f:
+        json.dump(split, f, indent=2)
 
-
-def get_all_sequences(casia_root):
-    """
-    Loops over all subjects in CASIA-B and collects train/test sequences
-    according to the specified protocol.
-    """
-    train_paths, test_paths = [], []
-
-    for sid in sorted(os.listdir(casia_root)):
-        subject_dir = os.path.join(casia_root, sid)
-        if not os.path.isdir(subject_dir):
-            continue
-
-        t_paths, tst_paths = get_sequences_by_condition(subject_dir)
-        train_paths.extend(t_paths)
-        test_paths.extend(tst_paths)
-
-    return train_paths, test_paths
-
+    print(f"Data split saved to {SPLIT_JSON}: {len(train_data)} train, {len(test_data)} test sequences.")
 
 if __name__ == "__main__":
-    # Example usage
-    BASE_PATH = "CASIA-B/output"  # update if needed
-    train_list, test_list = get_all_sequences(BASE_PATH)
-    print(f"Total training sequences: {len(train_list)}")
-    print(f"Total testing sequences: {len(test_list)}")
-    print("Example train seq:", train_list[:3])
-    print("Example test seq:", test_list[:3])
+    create_split()
