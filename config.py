@@ -36,6 +36,4 @@ LEARNING_RATE = 1e-4
 FREEZE_RESNET_LAYERS = 100   # Number of layers to freeze in ResNet50
 RESNET_INPUT_CHANNELS = 3    # ResNet expects 3-channel input
 
-# === Cross-Validation ===
-NUM_FOLDS = 5
-RANDOM_SEED = 42
+
